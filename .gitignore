@@ -1,0 +1,21 @@
+# Ignore build files
+Debug/
+x64/
+Release/
+__pycache__/
+
+# Ignore irrelevant studio files
+*.exe
+*.dll
+*.db-shm
+*.db-wal
+*.opendb
+*.iobj
+*.ipbd
+*.pdb
+*.suo
+*.tlog
+*.ilk
+*.psch
+*.vcxproj.filters
+*.vcxproj.user
