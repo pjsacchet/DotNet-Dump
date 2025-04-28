@@ -19,3 +19,4 @@ __pycache__/
 *.psch
 *.vcxproj.filters
 *.vcxproj.user
+*.config
