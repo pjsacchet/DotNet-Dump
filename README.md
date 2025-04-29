@@ -19,7 +19,12 @@ Upon execution, this program will:
 ## Password Hashes
 Plain password hashes (NTLM) on Windows are stored and retrieved via the following steps:
 - Obtian the bootkey
-  - Can be found under HKEY_LOCAL_MACHINE\SAM\SAM\Domains\Account\F
+  - This is really just a concatenation of four registry keys:
+    - HKEY_LOCAL_MACHINE\SYSTEM\ControlSet%03d\Control\Lsa where %03d is the current control set (HKEY_LOCAL_MACHINE\SYSTEM\Select\Current)
+      - HKEY_LOCAL_MACHINE\SYSTEM\ControlSet%03d\Control\Lsa\JD
+      - HKEY_LOCAL_MACHINE\SYSTEM\ControlSet%03d\Control\Lsa\Skew1
+      - HKEY_LOCAL_MACHINE\SYSTEM\ControlSet%03d\Control\Lsa\GBG
+      - HKEY_LOCAL_MACHINE\SYSTEM\ControlSet%03d\Control\Lsa\Data
 - Enumerate all user accounts stored in HKEY_LOCAL_MACHINE\SAM\SAM\Domains\Account\Users (these are RIDs for each user)
   - Obtain the 'V' key for each user 
   - Use bootkey to decrypt password hashes 

