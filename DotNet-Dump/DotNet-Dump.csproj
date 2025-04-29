@@ -5,7 +5,7 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{58077210-F2AC-421A-AF56-C0B9C036202C}</ProjectGuid>
-    <OutputType>Library</OutputType>
+    <OutputType>Exe</OutputType>
     <RootNamespace>DotNet_Dump</RootNamespace>
     <AssemblyName>DotNet-Dump</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>

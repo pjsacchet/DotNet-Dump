@@ -20,3 +20,5 @@ __pycache__/
 *.vcxproj.filters
 *.vcxproj.user
 *.config
+*.vsidx
+*.json
