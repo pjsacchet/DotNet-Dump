@@ -9,11 +9,15 @@ from binascii import unhexlify, hexlify
 import hashlib
 
 from impacket.structure import Structure
-
+from impacket import ntlm
+from six import b, PY2
 from Cryptodome.Cipher import DES, ARC4, AES
 from Cryptodome.Hash import HMAC, MD4, MD5
+from impacket.crypto import transformKey
 
 from struct import pack, unpack
+
+import os
 
 
 # Where all our files are written 
@@ -21,6 +25,22 @@ from struct import pack, unpack
 dirPath = "out"
 
 class CryptoCommon:
+    @staticmethod
+    def deriveKey(baseKey):
+        # 2.2.11.1.3 Deriving Key1 and Key2 from a Little-Endian, Unsigned Integer Key
+        # Let I be the little-endian, unsigned integer.
+        # Let I[X] be the Xth byte of I, where I is interpreted as a zero-base-index array of bytes.
+        # Note that because I is in little-endian byte order, I[0] is the least significant byte.
+        # Key1 is a concatenation of the following values: I[0], I[1], I[2], I[3], I[0], I[1], I[2].
+        # Key2 is a concatenation of the following values: I[3], I[0], I[1], I[2], I[3], I[0], I[1]
+        key = pack('<L',baseKey)
+        key1 = [key[0] , key[1] , key[2] , key[3] , key[0] , key[1] , key[2]]
+        key2 = [key[3] , key[0] , key[1] , key[2] , key[3] , key[0] , key[1]]
+        if PY2:
+            return transformKey(b''.join(key1)),transformKey(b''.join(key2))
+        else:
+            return transformKey(bytes(key1)),transformKey(bytes(key2))
+        
     @staticmethod
     def decryptAES(key, value, iv=b'\x00'*16):
         plainText = b''
@@ -131,6 +151,22 @@ class SAM_KEY_DATA_AES(Structure):
         ('Data',':'),
     )
 
+class SAM_HASH(Structure):
+    structure = (
+        ('PekID','<H=0'),
+        ('Revision','<H=0'),
+        ('Hash','16s=b""'),
+    )
+
+class SAM_HASH_AES(Structure):
+    structure = (
+        ('PekID','<H=0'),
+        ('Revision','<H=0'),
+        ('DataOffset','<L=0'),
+        ('Salt','16s=b""'),
+        ('Hash',':'),
+    )
+
 def MD5(data):
         md5 = hashlib.new('md5')
         md5.update(data)
@@ -183,18 +219,18 @@ def getHBootKey(bootKey, fKeyValue):
         return hashedBootKey
 
 
-def decryptHash(rid, cryptedHash, constant, newStyle = False):
-        Key1,Key2 = self.__cryptoCommon.deriveKey(rid)
+def decryptHash(rid, cryptedHash, constant, bootkey, newStyle = False):
+        Key1,Key2 = CryptoCommon.deriveKey(rid)
 
         Crypt1 = DES.new(Key1, DES.MODE_ECB)
         Crypt2 = DES.new(Key2, DES.MODE_ECB)
 
         if newStyle is False:
-            rc4Key = self.MD5( self.__hashedBootKey[:0x10] + pack("<L",rid) + constant )
+            rc4Key = MD5(bootkey[:0x10] + pack("<L",rid) + constant )
             rc4 = ARC4.new(rc4Key)
             key = rc4.encrypt(cryptedHash['Hash'])
         else:
-            key = CryptoCommon.decryptAES(self.__hashedBootKey[:0x10], cryptedHash['Hash'], cryptedHash['Salt'])[:16]
+            key = CryptoCommon.decryptAES(bootkey[:0x10], cryptedHash['Hash'], cryptedHash['Salt'])[:16]
 
         decryptedHash = Crypt1.decrypt(key[:8]) + Crypt2.decrypt(key[8:])
 
@@ -204,29 +240,18 @@ def dump(userRids, userVKeys, bootkey):
     NTPASSWORD = b"NTPASSWORD\0"
     LMPASSWORD = b"LMPASSWORD\0"
 
-    if self.__samFile is None:
-        # No SAM file provided
-        return
-
-    LOG.info('Dumping local SAM hashes (uid:rid:lmhash:nthash)')
-    self.getHBootKey()
-
-    usersKey = 'SAM\\Domains\\Account\\Users'
-
-    # Enumerate all the RIDs
-    rids = self.enumKey(usersKey)
-    # Remove the Names item
-    try:
-        rids.remove('Names')
-    except:
-        pass
+    index = 0 # used to track where we are with our v values since they were both added in order
 
     # Change this to array of our rid V values
-    for rid in rids:
-        userAccount = USER_ACCOUNT_V(self.getValue(ntpath.join(usersKey,rid,'V'))[1])
+    for rid in userRids:
+        userAccount = USER_ACCOUNT_V(unhexlify(userVKeys[index][:len(userVKeys[index])-1]))
         rid = int(rid,16)
 
+
+
         V = userAccount['Data']
+
+
 
         userName = V[userAccount['NameOffset']:userAccount['NameOffset']+userAccount['NameLength']].decode('utf-16le')
 
@@ -249,14 +274,13 @@ def dump(userRids, userVKeys, bootkey):
                 encLMHash = SAM_HASH_AES(V[userAccount['LMHashOffset']:][:userAccount['LMHashLength']])
             encNTHash = SAM_HASH_AES(V[userAccount['NTHashOffset']:][:userAccount['NTHashLength']])
 
-        LOG.debug('NewStyle hashes is: %s' % newStyle)
         if userAccount['LMHashLength'] >= 20:
-            lmHash = self.__decryptHash(rid, encLMHash, LMPASSWORD, newStyle)
+            lmHash = decryptHash(rid, encLMHash, LMPASSWORD, bootkey, newStyle)
         else:
             lmHash = b''
 
         if encNTHash != b'':
-            ntHash = self.__decryptHash(rid, encNTHash, NTPASSWORD, newStyle)
+            ntHash = decryptHash(rid, encNTHash, NTPASSWORD, bootkey, newStyle)
         else:
             ntHash = b''
 
@@ -266,8 +290,8 @@ def dump(userRids, userVKeys, bootkey):
             ntHash = ntlm.NTOWFv1('','')
 
         answer =  "%s:%d:%s:%s:::" % (userName, rid, hexlify(lmHash).decode('utf-8'), hexlify(ntHash).decode('utf-8'))
-        self.__itemsFound[rid] = answer
-        self.__perSecretCallback(answer)
+        print(answer)
+        index += 1
 
 
 
@@ -275,15 +299,17 @@ def dump(userRids, userVKeys, bootkey):
 
 
 def main():
+    userRidValues = []
+    userVValues = []
 
     # Grab our bootkey 
     bootKeyValue = open(dirPath + "/bootkey.txt", "r").readline()
 
-    print("Bootkey value from file is " + bootKeyValue)
+    #print("Bootkey value from file is " + bootKeyValue)
 
     realBootKey = getRealBootKey(bootKeyValue[:32])
 
-    print("Real bootkey is " + str(realBootKey))
+    #print("Real bootkey is " + str(realBootKey))
 
     # Get the hashed bootkey
     print("Getting hashed bootkey...")
@@ -293,10 +319,18 @@ def main():
 
     hBootKey = getHBootKey(realBootKey, fKeyValue)
 
-    print("Hashed bootkey is " + str(hBootKey))
+    #print("Hashed bootkey is " + str(hBootKey))
 
+    for file in os.listdir(dirPath):
+        # Dont read the files we've read and dont need
+        if (file != "fkey.txt" and file != "bootkey.txt"):
+            userRidValues.append(file.strip(".txt"))
+            userVValues.append(open(dirPath + "/" + file, "r").readline())
+
+    print("Dumping creds...")
 
     # Pass over to dump 
+    dump(userRidValues, userVValues, hBootKey)
 
 
     return
