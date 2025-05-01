@@ -5,8 +5,10 @@
 # Credit to impacket for a lot of this decryption; I merely put the pieces together: https://github.com/fortra/impacket
 
 from ctypes import *
-from binascii import unhexlify
+from binascii import unhexlify, hexlify
 import hashlib
+
+from impacket.structure import Structure
 
 from Cryptodome.Cipher import DES, ARC4, AES
 from Cryptodome.Hash import HMAC, MD4, MD5
@@ -15,7 +17,8 @@ from struct import pack, unpack
 
 
 # Where all our files are written 
-dirPath = "C:\Windows\SysWOW64\out" # under WOW64 only because we are executing PsExec, not PsExec64
+#dirPath = "C:\Windows\SysWOW64\out" # under WOW64 only because we are executing PsExec, not PsExec64
+dirPath = "out"
 
 class CryptoCommon:
     @staticmethod
@@ -103,6 +106,9 @@ class DOMAIN_ACCOUNT_F(Structure):
         ('UasCompatibilityRequired','<H=0'),
         ('Unknown3','<Q=0'),
         ('Key0',':'),
+# Commenting this, not needed and not present on Windows 2000 SP0
+#        ('Key1',':', SAM_KEY_DATA),
+#        ('Unknown4','<L=0'),
     )
 
 class SAM_KEY_DATA(Structure):
@@ -151,7 +157,7 @@ def getHBootKey(bootKey, fKeyValue):
 
         hashedBootKey = ""
 
-        F = fKeyValue
+        F = unhexlify(fKeyValue[:len(fKeyValue)-1])
 
         domainData = DOMAIN_ACCOUNT_F(F)
 
@@ -194,7 +200,7 @@ def decryptHash(rid, cryptedHash, constant, newStyle = False):
 
         return decryptedHash
 
-def dump(self):
+def dump(userRids, userVKeys, bootkey):
     NTPASSWORD = b"NTPASSWORD\0"
     LMPASSWORD = b"LMPASSWORD\0"
 
@@ -275,9 +281,9 @@ def main():
 
     print("Bootkey value from file is " + bootKeyValue)
 
-    realBootKey = getRealBootKey(bootKeyValue)
+    realBootKey = getRealBootKey(bootKeyValue[:32])
 
-    print("Real bootkey is " + realBootKey)
+    print("Real bootkey is " + str(realBootKey))
 
     # Get the hashed bootkey
     print("Getting hashed bootkey...")
@@ -286,6 +292,8 @@ def main():
     fKeyValue = open(dirPath + "/fkey.txt", "r").readline()
 
     hBootKey = getHBootKey(realBootKey, fKeyValue)
+
+    print("Hashed bootkey is " + str(hBootKey))
 
 
     # Pass over to dump 
