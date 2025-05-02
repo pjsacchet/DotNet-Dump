@@ -5,7 +5,9 @@ Dump password hashes and other useful info via .NET
 ## Design
 This piece of rudimentary malware will be packaged with PsExec (from sysinternals) along with a batch script that will run the program. The CONOP is as follows:
 - User downloads packaged/zipped files onto target computer
-- Upon unzipping, our batch file will execute, loading our dll via rundll32 and executing that process as SYSTEM via PsExec
+- Upon unzipping, our batch file will execute, executing:
+  -  Our dotnet binary as SYSTEM via PsExec and
+  -  Our python file to parse the contents 
 
 ## Execution
 Upon execution, this program will:
@@ -29,6 +31,14 @@ Plain password hashes (NTLM) on Windows are stored and retrieved via the followi
 - Enumerate all user accounts stored in HKEY_LOCAL_MACHINE\SAM\SAM\Domains\Account\Users (these are RIDs for each user)
   - Obtain the 'V' key for each user 
   - Use bootkey to decrypt password hashes 
+
+## Payload
+The payload itself will be a zipped folder, including four things:
+  - Our bat file which will run our dotnet program and python parsing file
+  - PsExec to execute in a SYSTEM context
+  - Our dotnet executable
+  - Our python file (compiled as a executable)
+    - You can build python files as executables via pyinstaller.exe --onefile -w <filename.py>
 
 ## Indicators of Compromise (IOCs)
 - rundll32.exe spawn with suspicious dll loaded in memory

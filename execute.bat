@@ -1,5 +1,7 @@
-:: get fullpath 
-SET fullPath = %CD%\DotNet-Dump.exe
+::@echo off
 
+:: get fullpath for executable and run it as system
+PsExec.exe -accepteula -s %CD%\DotNet-Dump.exe
 
-PsExec.exe -accepteula -s %fullPath%
+:: run python script to output results to txt
+CalcHash.exe

